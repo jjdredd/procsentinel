@@ -34,22 +34,38 @@ typedef struct _LDR_DATA_TABLE_ENTRY {
   };
   ULONG TimeDateStamp;
 } LDR_DATA_TABLE_ENTRY, *PLDR_DATA_TABLE_ENTRY;
+/*
+typedef struct _LSA_UNICODE_STRING32 {
+  USHORT Length;
+  USHORT MaximumLength;
+  DWORD  Buffer;
+} LSA_UNICODE_STRING32, *PLSA_UNICODE_STRING32, UNICODE_STRING32, *PUNICODE_STRING32;
+typedef struct _LIST_ENTRY32 {
+  DWORD Flink;
+  DWORD Blink;
+} LIST_ENTRY32, *PLIST_ENTRY32;
+*/
 typedef struct _LDR_DATA_TABLE_ENTRY32 {
   DWORD Reserved1[2];
-  LIST_ENTRY InMemoryOrderLinks;
+  LIST_ENTRY32 InMemoryOrderLinks;
   DWORD Reserved2[2];
   DWORD DllBase;
   DWORD EntryPoint;
   DWORD Reserved3;
-  UNICODE_STRING FullDllName;
+  UNICODE_STRING32 FullDllName;
   BYTE Reserved4[8];
-  PVOID Reserved5[3];
+  DWORD Reserved5[3];
   union {
-    ULONG CheckSum;
-    PVOID Reserved6;
+    DWORD CheckSum;
+    DWORD Reserved6;
   };
-  ULONG TimeDateStamp;
+  DWORD TimeDateStamp;
 } LDR_DATA_TABLE_ENTRY32, *PLDR_DATA_TABLE_ENTRY32;
+typedef struct _PEB_LDR_DATA32 {
+  BYTE       Reserved1[8];
+  DWORD      Reserved2[3];
+  LIST_ENTRY32 InMemoryOrderModuleList;
+} PEB_LDR_DATA32, *PPEB_LDR_DATA32;
 typedef struct _PEB_LDR_DATA {
   BYTE       Reserved1[8];
   PVOID      Reserved2[3];
@@ -209,6 +225,7 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
   PEB64 *peb64;
   PEB32 *peb32;
   DWORD PTR32;
+  UNICODE_STRING DllName;
 
   DbgPrint("IOCTL handler called\r\n");
   switch (pIoStackIrp->
@@ -244,14 +261,20 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 	for( Module = HeadModule->Flink;
 	     Module != HeadModule; Module = Module->Flink){
 	  dte = (PVOID *)Module - 2;
-	  DbgPrint("%wZ @ %p\n", dte->FullDllName, dte->DllBase);
+	  DbgPrint("%wZ @ %p\n", &(dte->FullDllName), dte->DllBase);
 	}
 	PTR32 = peb32->Ldr;
-	HeadModule = &(((PPEB_LDR_DATA)PTR32)->InMemoryOrderModuleList);
+	HeadModule = &(((PPEB_LDR_DATA32)PTR32)->InMemoryOrderModuleList);
 	for( PTR32 = HeadModule->Flink;
-	     PTR32 != HeadModule; PTR32 = ((PLIST_ENTRY)PTR32)->Flink){
-	  dte = PTR32 - 2;
-	  DbgPrint("%wZ @ %p\n", dte->FullDllName, dte->DllBase);
+	     PTR32 != HeadModule; PTR32 = ((PLIST_ENTRY32)PTR32)->Flink){
+	  dte = (DWORD *)PTR32 - 2;
+	  DllName.Length = ((PLDR_DATA_TABLE_ENTRY32)dte)->FullDllName.Length;
+	  DllName.MaximumLength = ((PLDR_DATA_TABLE_ENTRY32)dte)->
+	    FullDllName.MaximumLength;
+	  DllName.Buffer = (PWSTR)((PLDR_DATA_TABLE_ENTRY32)dte)->
+	    FullDllName.Buffer;
+	  DbgPrint("%wZ @ 0x%X\n", &DllName, 
+		   ((PLDR_DATA_TABLE_ENTRY32)dte)->DllBase);
 	}
 	
 	KeUnstackDetachProcess(&apc_state);
