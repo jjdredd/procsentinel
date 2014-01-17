@@ -1,10 +1,16 @@
 #include "sentinel.h"
 #include "sha1.h"
 
+int RegistrationHandle;
+//int CBCKRegistered;
+int *pidlist = NULL;
+HANDLE SubjPID = 0;
+UNICODE_STRING usDosDeviceName, MainModuleName;
+
 NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath){
   NTSTATUS NtStatus = STATUS_SUCCESS;
   PDEVICE_OBJECT pDeviceObject = NULL;
-  UNICODE_STRING usDriverName, usDosDeviceName, Altitude;
+  UNICODE_STRING usDriverName, Altitude;
   int i;
   OB_CALLBACK_REGISTRATION CallbackRegistration;
   OB_OPERATION_REGISTRATION OperationRegistration;
@@ -12,6 +18,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
 
   RtlInitUnicodeString(&usDriverName, L"\\Device\\Sentinel");
   RtlInitUnicodeString(&usDosDeviceName, L"\\DosDevices\\Sentinel");
+  RtlInitUnicodeString(&MainModuleName, L"hl.exe");
   DbgPrint("Driver Entry \n");
   NtStatus = IoCreateDevice(pDriverObject, 0,
 			    &usDriverName,
@@ -28,7 +35,18 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
   pDriverObject->DriverUnload = &Dtor;
   pDeviceObject->Flags |= DO_DIRECT_IO;
   pDeviceObject->Flags &= (~DO_DEVICE_INITIALIZING);
-  
+
+  NtStatus = PsSetLoadImageNotifyRoutine(&LoadImageNotify);
+  if(!NT_SUCCESS(NtStatus)){
+    DbgPrint("couldn't set imageload notify routine\n");
+    return STATUS_UNSUCCESSFUL;
+  }
+  NtStatus = PsSetCreateProcessNotifyRoutine(&ProcessNotify, 0);
+  if(!NT_SUCCESS(NtStatus)){
+    DbgPrint("couldn't set create process notify routine\n");
+   return STATUS_UNSUCCESSFUL;
+  }
+
   RtlZeroMemory(&CallbackRegistration, sizeof(OB_CALLBACK_REGISTRATION));
   RtlZeroMemory(&OperationRegistration, sizeof(OB_OPERATION_REGISTRATION));
   RtlInitUnicodeString(&Altitude, L"idkwat2puthere");  //adjust later
@@ -49,6 +67,16 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
   DbgPrint("0X%X\n", NtStatus);
   return NtStatus;
 }
+int DoesEndWith(PUNICODE_STRING hay, PUNICODE_STRING needle){
+  int i, ldif;
+  PWSTR haySTR = hay->Buffer, needleSTR = needle->Buffer;
+  if( (ldif = hay->Length - needle->Length) < 0)
+    return 0;
+  if(RtlCompareMemory((char *)haySTR + ldif, needleSTR, needle->Length)
+     == needle->Length)
+    return 1;
+  return 0;    
+}
 OB_PREOP_CALLBACK_STATUS PreCallback(PVOID Context, 
 				     POB_PRE_OPERATION_INFORMATION OpInfo){
 
@@ -56,6 +84,22 @@ OB_PREOP_CALLBACK_STATUS PreCallback(PVOID Context,
   return STATUS_SUCCESS;
 }
 void PostCallback(PVOID Context, POB_POST_OPERATION_INFORMATION OpInfo){
+  return;
+}
+void LoadImageNotify(PUNICODE_STRING FullImgName,
+					  HANDLE PID,
+					  PIMAGE_INFO ImageInfo){
+  if(DoesEndWith(FullImgName, &MainModuleName)) SubjPID = PID;
+  if(SubjPID && (PID == SubjPID))
+    DbgPrint("%wZ loaded in %i\n @ 0x%X", FullImgName, PID,
+	     ImageInfo->ImageBase);
+  return;
+}
+void ProcessNotify(HANDLE PPID, HANDLE PID, BOOLEAN Create){
+  if(!Create && (SubjPID == PID)){
+    DbgPrint("died subj %i", SubjPID);
+    SubjPID = 0;
+  }
   return;
 }
 NTSTATUS Read(PDEVICE_OBJECT  DriverObject, PIRP Irp){
@@ -239,10 +283,10 @@ NTSTATUS NotImplemented(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 }
 
 void Dtor(PDRIVER_OBJECT  DriverObject){
-  UNICODE_STRING usDosDeviceName;
   DbgPrint("Dtor Called \n");
-  RtlInitUnicodeString(&usDosDeviceName, L"\\DosDevices\\Sentinel");
   //ObUnRegisterCallbacks(&RegistrationHandle);
+  PsRemoveLoadImageNotifyRoutine(&LoadImageNotify);
+  PsSetCreateProcessNotifyRoutine(&ProcessNotify, 1);
   IoDeleteSymbolicLink(&usDosDeviceName);
   IoDeleteDevice(DriverObject->DeviceObject);
   return STATUS_SUCCESS;

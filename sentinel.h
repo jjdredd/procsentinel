@@ -247,10 +247,6 @@ typedef struct _IMAGE_SECTION_HEADER {
 
 #define IOCTL_SENTINEL_HASH CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_IN_DIRECT, FILE_ANY_ACCESS)
 
-int RegistrationHandle;
-//int CBCKRegistered;
-int *pidlist = NULL;
-
 typedef struct{
   int pid; // long???
   PVOID start;
@@ -265,3 +261,6 @@ NTSTATUS NotImplemented(PDEVICE_OBJECT, PIRP);
 void Dtor(PDRIVER_OBJECT );
 OB_PREOP_CALLBACK_STATUS PreCallback(PVOID, POB_PRE_OPERATION_INFORMATION);
 void PostCallback(PVOID, POB_POST_OPERATION_INFORMATION);
+void ProcessNotify(HANDLE, HANDLE, BOOLEAN);
+void LoadImageNotify(PUNICODE_STRING, HANDLE, PIMAGE_INFO);
+int DoesEndWith(PUNICODE_STRING, PUNICODE_STRING);
