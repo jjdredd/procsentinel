@@ -1,6 +1,8 @@
+#ifndef SENTINEL_H
+#define SENTINEL_H
 #include <Fltkernel.h>
 #include <windef.h>
-
+#include <ntdef.h>
 
 /* workaround for an undefined type of an unsupported variable */
 typedef PVOID* PPS_POST_PROCESS_INIT_ROUTINE; 
@@ -253,6 +255,18 @@ typedef struct{
   int size;
 }  HashReqData;
 
+typedef struct{
+  LIST_ENTRY MList;
+  PUNICODE_STRING FullImgName;
+  PVOID ImgBase;
+} MODULE_ENTRY;
+
+typedef struct{
+  LIST_ENTRY PList;
+  HANDLE pid;
+  LIST_ENTRY ModuleListHead;
+} PROC_ENTRY;
+
 NTSTATUS Read(PDEVICE_OBJECT, PIRP);
 NTSTATUS Create(PDEVICE_OBJECT, PIRP);
 NTSTATUS Close(PDEVICE_OBJECT, PIRP);
@@ -263,4 +277,4 @@ OB_PREOP_CALLBACK_STATUS PreCallback(PVOID, POB_PRE_OPERATION_INFORMATION);
 void PostCallback(PVOID, POB_POST_OPERATION_INFORMATION);
 void ProcessNotify(HANDLE, HANDLE, BOOLEAN);
 void LoadImageNotify(PUNICODE_STRING, HANDLE, PIMAGE_INFO);
-int DoesEndWith(PUNICODE_STRING, PUNICODE_STRING);
+#endif

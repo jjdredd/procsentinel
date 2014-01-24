@@ -20,6 +20,12 @@ LocatePIDEntry(PLIST_ENTRY lst, HANDLE pid){
   }
   return NULL;
 }
+/* 
+add RemoveModuleListEntry
+and use it in RemoveProcessEntry
+Don't worry about performance: each subsequent
+removal will be on the head of the list
+*/
 RemoveProcessEntry(PLIST_ENTRY lst){
   PROC_ENTRY *Pentry;
   PLIST_ENTRY li;

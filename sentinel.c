@@ -1,11 +1,11 @@
 #include "sentinel.h"
 #include "sha1.h"
+#include "util.h"
 
 int RegistrationHandle;
 //int CBCKRegistered;
-int *pidlist = NULL;
-HANDLE SubjPID = 0;
 UNICODE_STRING usDosDeviceName, MainModuleName;
+LIST_ENTRY ProcessListHead;
 
 NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath){
   NTSTATUS NtStatus = STATUS_SUCCESS;
@@ -46,13 +46,14 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
     DbgPrint("couldn't set create process notify routine\n");
    return STATUS_UNSUCCESSFUL;
   }
-
+  InitializeListHead(&ProcessListHead);
+    
   RtlZeroMemory(&CallbackRegistration, sizeof(OB_CALLBACK_REGISTRATION));
   RtlZeroMemory(&OperationRegistration, sizeof(OB_OPERATION_REGISTRATION));
   RtlInitUnicodeString(&Altitude, L"idkwat2puthere");  //adjust later
   OperationRegistration.ObjectType = PsProcessType;
-  OperationRegistration.Operations = OB_OPERATION_HANDLE_CREATE; 
-  // | _DUPLICATE ?
+  OperationRegistration.Operations 
+    = OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE;
   OperationRegistration.PreOperation = &PreCallback;
   OperationRegistration.PostOperation = &PostCallback;
   CallbackRegistration.Version = OB_FLT_REGISTRATION_VERSION;
@@ -67,16 +68,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
   DbgPrint("0X%X\n", NtStatus);
   return NtStatus;
 }
-int DoesEndWith(PUNICODE_STRING hay, PUNICODE_STRING needle){
-  int i, ldif;
-  PWSTR haySTR = hay->Buffer, needleSTR = needle->Buffer;
-  if( (ldif = hay->Length - needle->Length) < 0)
-    return 0;
-  if(RtlCompareMemory((char *)haySTR + ldif, needleSTR, needle->Length)
-     == needle->Length)
-    return 1;
-  return 0;    
-}
+
 OB_PREOP_CALLBACK_STATUS PreCallback(PVOID Context, 
 				     POB_PRE_OPERATION_INFORMATION OpInfo){
 
@@ -89,16 +81,29 @@ void PostCallback(PVOID Context, POB_POST_OPERATION_INFORMATION OpInfo){
 void LoadImageNotify(PUNICODE_STRING FullImgName,
 					  HANDLE PID,
 					  PIMAGE_INFO ImageInfo){
-  if(DoesEndWith(FullImgName, &MainModuleName)) SubjPID = PID;
-  if(SubjPID && (PID == SubjPID))
+  PROC_ENTRY *ProcEntry;
+  MODULE_ENTRY *ModuleEntry;
+  if(DoesEndWith(FullImgName, &MainModuleName)){
+    ProcEntry = ExAllocatePoolWithTag(PagedPool, sizeof(PROC_ENTRY), 0);
+    InitializeListHead(&(ProcEntry->ModuleListHead));
+    ProcEntry->pid = PID;
+    InsertTailList(&ProcessListHead, &(ProcEntry->PList));
+  }
+  if(ProcEntry = LocatePIDEntry(&ProcessListHead, PID)){
     DbgPrint("%wZ loaded in %i\n @ 0x%X", FullImgName, PID,
 	     ImageInfo->ImageBase);
+    ModuleEntry = ExAllocatePoolWithTag(PagedPool, sizeof(MODULE_ENTRY), 0);
+    ModuleEntry->FullImgName = FullImgName;
+    ModuleEntry->ImgBase = ImageInfo->ImageBase;
+    InsertTailList(&(ProcEntry->ModuleListHead), &(ModuleEntry->MList));
+  }
   return;
 }
 void ProcessNotify(HANDLE PPID, HANDLE PID, BOOLEAN Create){
-  if(!Create && (SubjPID == PID)){
-    DbgPrint("died subj %i", SubjPID);
-    SubjPID = 0;
+  PROC_ENTRY *ProcEntry;
+  if(!Create && (ProcEntry = LocatePIDEntry(&ProcessListHead, PID))){
+    DbgPrint("died subj %i", PID);
+    
   }
   return;
 }
