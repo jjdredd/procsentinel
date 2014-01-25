@@ -3,5 +3,6 @@
 #include "sentinel.h"
 int DoesEndWith(PUNICODE_STRING, PUNICODE_STRING);
 PROC_ENTRY *LocatePIDEntry(PLIST_ENTRY, HANDLE);
-void RemoveProcessEntry(PLIST_ENTRY);
+void RemoveProcessEntry(PROC_ENTRY*);
+void RemoveModuleEntry(MODULE_ENTRY*);
 #endif

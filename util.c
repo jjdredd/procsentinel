@@ -1,6 +1,6 @@
 #include "util.h"
 
-DoesEndWith(PUNICODE_STRING hay, PUNICODE_STRING needle){
+int DoesEndWith(PUNICODE_STRING hay, PUNICODE_STRING needle){
   int i, ldif;
   PWSTR haySTR = hay->Buffer, needleSTR = needle->Buffer;
   if( (ldif = hay->Length - needle->Length) < 0)
@@ -10,30 +10,29 @@ DoesEndWith(PUNICODE_STRING hay, PUNICODE_STRING needle){
     return 1;
   return 0;    
 }
-LocatePIDEntry(PLIST_ENTRY lst, HANDLE pid){
+PROC_ENTRY *LocatePIDEntry(PLIST_ENTRY lst, HANDLE pid){
   PLIST_ENTRY li;
   PROC_ENTRY *Pentry;
-  for(li = lst->Flink; li != lst; li = li -> Flink){
+  for(li = lst->Flink; li != lst; li = li->Flink){
     Pentry = CONTAINING_RECORD(li, PROC_ENTRY, PList);
     if(Pentry->pid == pid)
       return Pentry;
   }
   return NULL;
 }
-/* 
-add RemoveModuleListEntry
-and use it in RemoveProcessEntry
-Don't worry about performance: each subsequent
-removal will be on the head of the list
-*/
-RemoveProcessEntry(PLIST_ENTRY lst){
-  PROC_ENTRY *Pentry;
-  PLIST_ENTRY li;
-  MODULE_ENTRY *Mentry;
-  Pentry = CONTAINING_RECORD(lst, PROC_ENTRY, PList);
-  for( li = Pentry->ModuleListHead->Flink; 
-       li != Pentry->ModuleListHead; li = li->Flink){
-    Mentry = CONTAINING_RECORD(li, MODULE_ENTRY, MList);
-    RemoveHeadList();
+void RemoveModuleEntry(MODULE_ENTRY *Mentry){
+  RemoveEntryList(&(Mentry->MList));
+  ExFreePoolWithTag(Mentry, TAG);
+  return;
+}
+void RemoveProcessEntry(PROC_ENTRY *Pentry){
+  PLIST_ENTRY li, nli;
+  for( li = Pentry->ModuleListHead.Flink; 
+       li != &(Pentry->ModuleListHead); li = nli){
+    nli = li->Flink;
+    RemoveModuleEntry(CONTAINING_RECORD(li, MODULE_ENTRY, MList));
   }
+  RemoveEntryList(&(Pentry->PList));
+  ExFreePoolWithTag(Pentry, TAG);
+  return;
 }

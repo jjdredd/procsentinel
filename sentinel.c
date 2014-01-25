@@ -14,7 +14,6 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
   int i;
   OB_CALLBACK_REGISTRATION CallbackRegistration;
   OB_OPERATION_REGISTRATION OperationRegistration;
-  
 
   RtlInitUnicodeString(&usDriverName, L"\\Device\\Sentinel");
   RtlInitUnicodeString(&usDosDeviceName, L"\\DosDevices\\Sentinel");
@@ -84,7 +83,12 @@ void LoadImageNotify(PUNICODE_STRING FullImgName,
   PROC_ENTRY *ProcEntry;
   MODULE_ENTRY *ModuleEntry;
   if(DoesEndWith(FullImgName, &MainModuleName)){
-    ProcEntry = ExAllocatePoolWithTag(PagedPool, sizeof(PROC_ENTRY), 0);
+    DbgPrint("%wZ loaded in %i\n @ 0x%X", FullImgName, PID,
+	     ImageInfo->ImageBase);
+    if((ProcEntry = ExAllocatePoolWithTag(PagedPool, sizeof(PROC_ENTRY), TAG)) == NULL){
+      DbgPrint("Couldn't allocate\n");
+      return;
+    }
     InitializeListHead(&(ProcEntry->ModuleListHead));
     ProcEntry->pid = PID;
     InsertTailList(&ProcessListHead, &(ProcEntry->PList));
@@ -92,7 +96,10 @@ void LoadImageNotify(PUNICODE_STRING FullImgName,
   if(ProcEntry = LocatePIDEntry(&ProcessListHead, PID)){
     DbgPrint("%wZ loaded in %i\n @ 0x%X", FullImgName, PID,
 	     ImageInfo->ImageBase);
-    ModuleEntry = ExAllocatePoolWithTag(PagedPool, sizeof(MODULE_ENTRY), 0);
+    if((ModuleEntry = ExAllocatePoolWithTag(PagedPool, sizeof(MODULE_ENTRY), TAG)) == NULL){
+       DbgPrint("Couldn't allocate\n");
+      return;
+    }
     ModuleEntry->FullImgName = FullImgName;
     ModuleEntry->ImgBase = ImageInfo->ImageBase;
     InsertTailList(&(ProcEntry->ModuleListHead), &(ModuleEntry->MList));
@@ -103,7 +110,7 @@ void ProcessNotify(HANDLE PPID, HANDLE PID, BOOLEAN Create){
   PROC_ENTRY *ProcEntry;
   if(!Create && (ProcEntry = LocatePIDEntry(&ProcessListHead, PID))){
     DbgPrint("died subj %i", PID);
-    
+    RemoveProcessEntry(ProcEntry);
   }
   return;
 }
@@ -157,6 +164,10 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
   PIMAGE_SECTION_HEADER ish;
   SHA1Context sha;
 
+  PROC_ENTRY *ProcEntry;
+  MODULE_ENTRY *ModuleEntry;
+  LIST_ENTRY *pli, *mli;
+
   DbgPrint("IOCTL handler called\r\n");
   switch (pIoStackIrp->
 	  Parameters.DeviceIoControl.IoControlCode){
@@ -182,6 +193,26 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 	&& OutBuffer){ //outbuffer
       //attach, read, hash
       hri = Irp->AssociatedIrp.SystemBuffer;
+
+      if(IsListEmpty(&ProcessListHead)){
+	DbgPrint("Empty Proc List\n");
+	break;
+      }
+      for(pli = ProcessListHead.Flink; 
+	  pli != &(ProcessListHead); pli = pli->Flink){
+	ProcEntry = CONTAINING_RECORD(pli, PROC_ENTRY, PList);
+	DbgPrint("In Process List: %i", ProcEntry->pid);
+	if(IsListEmpty(&ProcEntry->ModuleListHead)){
+	  DbgPrint("Empty mod List\n");
+	  break;
+	}
+	for(mli = ProcEntry->ModuleListHead.Flink; 
+	    mli != &(ProcEntry->ModuleListHead); mli = mli->Flink){
+	  ModuleEntry = CONTAINING_RECORD(mli, MODULE_ENTRY, MList);
+	  DbgPrint("%wZ @ %p\n",ModuleEntry->FullImgName, ModuleEntry->ImgBase);
+	}
+      }
+      break;
       DbgPrint("attaching to pid %i\n", hri->pid);
       if(NT_SUCCESS(PsLookupProcessByProcessId(hri->pid, &proc))){
 	KeStackAttachProcess(proc, &apc_state);

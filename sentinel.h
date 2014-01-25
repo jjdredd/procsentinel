@@ -249,6 +249,9 @@ typedef struct _IMAGE_SECTION_HEADER {
 
 #define IOCTL_SENTINEL_HASH CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_IN_DIRECT, FILE_ANY_ACCESS)
 
+
+#define TAG 'jd'
+
 typedef struct{
   int pid; // long???
   PVOID start;
