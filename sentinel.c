@@ -146,16 +146,14 @@ NTSTATUS Read(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 
 NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
   NTSTATUS status = STATUS_UNSUCCESSFUL;
-  int nsec, i;
+  int nsec, i, PESIGN = 0x00004550;
+  WORD DOSMAGIC = 0x5A4D;
   PIO_STACK_LOCATION pIoStackIrp = IoGetCurrentIrpStackLocation(Irp);
   PCHAR OutBuffer = NULL;
   HashReqData *hri;
   PEPROCESS proc;
   KAPC_STATE apc_state;
-  PLIST_ENTRY Module, HeadModule;
-  PLDR_DATA_TABLE_ENTRY dte;
-  PEB64 *peb64;
-  PEB32 *peb32;
+  PLIST_ENTRY ModuleLE, ProcessLE;
   DWORD PTR32;
   UNICODE_STRING DllName;
   PIMAGE_DOS_HEADER dosh;
@@ -163,10 +161,9 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
   PIMAGE_NT_HEADERS64 nth64;
   PIMAGE_SECTION_HEADER ish;
   SHA1Context sha;
-
+  
   PROC_ENTRY *ProcEntry;
   MODULE_ENTRY *ModuleEntry;
-  LIST_ENTRY *pli, *mli;
 
   DbgPrint("IOCTL handler called\r\n");
   switch (pIoStackIrp->
@@ -198,93 +195,83 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 	DbgPrint("Empty Proc List\n");
 	break;
       }
-      for(pli = ProcessListHead.Flink; 
-	  pli != &(ProcessListHead); pli = pli->Flink){
-	ProcEntry = CONTAINING_RECORD(pli, PROC_ENTRY, PList);
+      for(ProcessLE = ProcessListHead.Flink; 
+	  ProcessLE != &(ProcessListHead); ProcessLE = ProcessLE->Flink){
+	ProcEntry = CONTAINING_RECORD(ProcessLE, PROC_ENTRY, PList);
 	DbgPrint("In Process List: %i", ProcEntry->pid);
 	if(IsListEmpty(&ProcEntry->ModuleListHead)){
 	  DbgPrint("Empty mod List\n");
 	  break;
 	}
-	for(mli = ProcEntry->ModuleListHead.Flink; 
-	    mli != &(ProcEntry->ModuleListHead); mli = mli->Flink){
-	  ModuleEntry = CONTAINING_RECORD(mli, MODULE_ENTRY, MList);
-	  DbgPrint("%wZ @ %p\n",ModuleEntry->FullImgName, ModuleEntry->ImgBase);
-	}
-      }
-      break;
-      DbgPrint("attaching to pid %i\n", hri->pid);
-      if(NT_SUCCESS(PsLookupProcessByProcessId(hri->pid, &proc))){
-	KeStackAttachProcess(proc, &apc_state);
-	peb64 = PsGetProcessPeb(proc);
-	peb32 = (char *)peb64 - 0x1000;
-	HeadModule = &(peb64->LoaderData->InMemoryOrderModuleList);
-	for( Module = HeadModule->Flink;
-	     Module != HeadModule; Module = Module->Flink){
-	  dte = (PVOID *)Module - 2;
-	  DbgPrint("%wZ @ %p\n", &(dte->FullDllName), dte->DllBase);
-	  dosh = dte->DllBase;
-	  nth64 = (char *)dosh + dosh->e_lfanew;
-	  nsec = nth64->FileHeader.NumberOfSections;
-	  ish = (char *) &(nth64->OptionalHeader) 
-	    + nth64->FileHeader.SizeOfOptionalHeader;
-	  for( i = 0; i < nsec; i++){
-	    if(ish[i].Characteristics & IMAGE_SCN_CNT_CODE){
-	      DbgPrint("%p w/ sha1: ", ish[i].VirtualAddress + (char *)dosh);
-	      SHA1Reset(&sha);
-	      SHA1Input(&sha, 
-			(PUCHAR *) (ish[i].VirtualAddress + (char *)dosh), 
-			ish[i].Misc.VirtualSize);
-	      if(SHA1Result(&sha))
-		DbgPrint("%X%X%X%X%X", sha.Message_Digest[0],
-			 sha.Message_Digest[1],
-			 sha.Message_Digest[2],
-			 sha.Message_Digest[3],
-			 sha.Message_Digest[4]);
+	DbgPrint("attaching to pid %i\n", ProcEntry->pid);
+	if(NT_SUCCESS(PsLookupProcessByProcessId(ProcEntry->pid, &proc))){
+	  KeStackAttachProcess(proc, &apc_state);
+	  for(ModuleLE = ProcEntry->ModuleListHead.Flink; 
+	      ModuleLE != &(ProcEntry->ModuleListHead); ModuleLE = ModuleLE->Flink){
+	    ModuleEntry = CONTAINING_RECORD(ModuleLE, MODULE_ENTRY, MList);
+	    DbgPrint("%wZ @ %p\n",ModuleEntry->FullImgName, ModuleEntry->ImgBase);
+	    dosh = ModuleEntry->ImgBase;
+   	    __try{
+	      if(!dosh && (dosh->e_magic != DOSMAGIC)){
+		DbgPrint("DOS magic not valid\n");
+		continue;
+	      }
+	      nth32 = nth64 = (char *)dosh + dosh->e_lfanew;
+	      if(nth32->Signature != PESIGN){
+		DbgPrint("PE signature not valid\n");
+		continue;
+	      }
+	    }__except(EXCEPTION_EXECUTE_HANDLER){
+	      DbgPrint("!EXCEPTION! Module probably unloaded\n");
+	      continue;
+	    }
+	    if(nth32->FileHeader.Machine == 0x8664){
+	      nsec = nth64->FileHeader.NumberOfSections;
+	      ish = (char *) &(nth64->OptionalHeader) 
+		+ nth64->FileHeader.SizeOfOptionalHeader;
+	      for( i = 0; i < nsec; i++){
+		if(ish[i].Characteristics & IMAGE_SCN_CNT_CODE){
+		  DbgPrint("%p w/ sha1: ", ish[i].VirtualAddress + (char *)dosh);
+		  SHA1Reset(&sha);
+		  SHA1Input(&sha, 
+			    (PUCHAR *) (ish[i].VirtualAddress + (char *)dosh), 
+			    ish[i].Misc.VirtualSize);
+		  if(SHA1Result(&sha))
+		    DbgPrint("%X%X%X%X%X", sha.Message_Digest[0],
+			     sha.Message_Digest[1],
+			     sha.Message_Digest[2],
+			     sha.Message_Digest[3],
+			     sha.Message_Digest[4]);
 		      
-	    }
+		}
+	      }		
+	    }else if(nth32->FileHeader.Machine == 0x014c){
+	      nsec = nth32->FileHeader.NumberOfSections;
+	      ish = (char *) &(nth32->OptionalHeader) 
+		+ nth32->FileHeader.SizeOfOptionalHeader;
+	      for( i = 0; i < nsec; i++){
+		if(ish[i].Characteristics & IMAGE_SCN_CNT_CODE){
+		  DbgPrint("%p w/ sha1: ", ish[i].VirtualAddress + (char *)dosh);
+		  SHA1Reset(&sha);
+		  SHA1Input(&sha, 
+			    (PUCHAR *) (ish[i].VirtualAddress + (char *)dosh), 
+			    ish[i].Misc.VirtualSize);
+		  if(SHA1Result(&sha))
+		    DbgPrint("%X%X%X%X%X", sha.Message_Digest[0],
+			     sha.Message_Digest[1],
+			     sha.Message_Digest[2],
+			     sha.Message_Digest[3],
+			     sha.Message_Digest[4]);
+		}
+	      }
+	    }else DbgPrint("Probably itanium :-)\n");
 	  }
+	  KeUnstackDetachProcess(&apc_state);
+	  ObDereferenceObject(proc);
+	  status = STATUS_SUCCESS;
 	}
-	PTR32 = peb32->Ldr;
-	HeadModule = &(((PPEB_LDR_DATA32)PTR32)->InMemoryOrderModuleList);
-	for( PTR32 = HeadModule->Flink;
-	     PTR32 != HeadModule; PTR32 = ((PLIST_ENTRY32)PTR32)->Flink){
-	  dte = (DWORD *)PTR32 - 2;
-	  DllName.Length = ((PLDR_DATA_TABLE_ENTRY32)dte)->FullDllName.Length;
-	  DllName.MaximumLength = ((PLDR_DATA_TABLE_ENTRY32)dte)->
-	    FullDllName.MaximumLength;
-	  DllName.Buffer = (PWSTR)((PLDR_DATA_TABLE_ENTRY32)dte)->
-	    FullDllName.Buffer;
-	  DbgPrint("%wZ @ 0x%X\n", &DllName, 
-		   ((PLDR_DATA_TABLE_ENTRY32)dte)->DllBase);
-	  dosh = (DWORD)(((PLDR_DATA_TABLE_ENTRY32)dte)->DllBase);
-	  nth32 = (char *)dosh + dosh->e_lfanew;
-	  nsec = nth32->FileHeader.NumberOfSections;
-	  ish = (char *) &(nth32->OptionalHeader) 
-	    + nth32->FileHeader.SizeOfOptionalHeader;
-	  for( i = 0; i < nsec; i++){
-	    if(ish[i].Characteristics & IMAGE_SCN_CNT_CODE){
-	      DbgPrint("%p w/ sha1: ", ish[i].VirtualAddress + (char *)dosh);
-	      SHA1Reset(&sha);
-	      SHA1Input(&sha, 
-			(PUCHAR *) (ish[i].VirtualAddress + (char *)dosh), 
-			ish[i].Misc.VirtualSize);
-	      if(SHA1Result(&sha))
-		DbgPrint("%X%X%X%X%X", sha.Message_Digest[0],
-			 sha.Message_Digest[1],
-			 sha.Message_Digest[2],
-			 sha.Message_Digest[3],
-			 sha.Message_Digest[4]);
-	    }
-	  }
-	}
-	
-	KeUnstackDetachProcess(&apc_state);
-	ObDereferenceObject(proc);
-	status = STATUS_SUCCESS;
       }
-    }
-    else DbgPrint("Argument mismatch");
+    }else DbgPrint("Argument mismatch");
     break;
   default:
     status = STATUS_INVALID_DEVICE_REQUEST;
