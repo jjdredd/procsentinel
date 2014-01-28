@@ -96,11 +96,11 @@ void LoadImageNotify(PUNICODE_STRING FullImgName,
   if(ProcEntry = LocatePIDEntry(&ProcessListHead, PID)){
     DbgPrint("%wZ loaded in %i\n @ 0x%X", FullImgName, PID,
 	     ImageInfo->ImageBase);
-    if((ModuleEntry = ExAllocatePoolWithTag(PagedPool, sizeof(MODULE_ENTRY), TAG)) == NULL){
+    if((ModuleEntry = AllocModuleEntry()) == NULL){
        DbgPrint("Couldn't allocate\n");
       return;
     }
-    ModuleEntry->FullImgName = FullImgName;
+    RtlUnicodeStringCopy(&(ModuleEntry->FullImgName), FullImgName);
     ModuleEntry->ImgBase = ImageInfo->ImageBase;
     InsertTailList(&(ProcEntry->ModuleListHead), &(ModuleEntry->MList));
   }
@@ -209,7 +209,7 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 	  for(ModuleLE = ProcEntry->ModuleListHead.Flink; 
 	      ModuleLE != &(ProcEntry->ModuleListHead); ModuleLE = ModuleLE->Flink){
 	    ModuleEntry = CONTAINING_RECORD(ModuleLE, MODULE_ENTRY, MList);
-	    DbgPrint("%wZ @ %p\n",ModuleEntry->FullImgName, ModuleEntry->ImgBase);
+	    DbgPrint("%wZ @ %p\n", &(ModuleEntry->FullImgName), ModuleEntry->ImgBase);
 	    dosh = ModuleEntry->ImgBase;
    	    __try{
 	      if(!dosh && (dosh->e_magic != DOSMAGIC)){
@@ -308,6 +308,7 @@ NTSTATUS NotImplemented(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 void Dtor(PDRIVER_OBJECT  DriverObject){
   DbgPrint("Dtor Called \n");
   //ObUnRegisterCallbacks(&RegistrationHandle);
+  //free process list stuff here?
   PsRemoveLoadImageNotifyRoutine(&LoadImageNotify);
   PsSetCreateProcessNotifyRoutine(&ProcessNotify, 1);
   IoDeleteSymbolicLink(&usDosDeviceName);

@@ -22,6 +22,7 @@ PROC_ENTRY *LocatePIDEntry(PLIST_ENTRY lst, HANDLE pid){
 }
 void RemoveModuleEntry(MODULE_ENTRY *Mentry){
   RemoveEntryList(&(Mentry->MList));
+  ExFreePoolWithTag(Mentry->FullImgName.Buffer, TAG);
   ExFreePoolWithTag(Mentry, TAG);
   return;
 }
@@ -36,3 +37,13 @@ void RemoveProcessEntry(PROC_ENTRY *Pentry){
   ExFreePoolWithTag(Pentry, TAG);
   return;
 }
+MODULE_ENTRY *AllocModuleEntry(void){
+  MODULE_ENTRY *ret;
+  if(!(ret = ExAllocatePoolWithTag(PagedPool, sizeof(MODULE_ENTRY), TAG)))
+    return ret;
+  ret->FullImgName.MaximumLength = NTSTRSAFE_UNICODE_STRING_MAX_CCH*sizeof(WCHAR);
+  ret->FullImgName.Buffer 
+    = ExAllocatePoolWithTag(PagedPool, NTSTRSAFE_UNICODE_STRING_MAX_CCH*sizeof(WCHAR), TAG);
+  return ret;
+}
+

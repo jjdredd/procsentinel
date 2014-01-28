@@ -260,7 +260,7 @@ typedef struct{
 
 typedef struct{
   LIST_ENTRY MList;
-  PUNICODE_STRING FullImgName;
+  UNICODE_STRING FullImgName;
   PVOID ImgBase;
 } MODULE_ENTRY;
 
