@@ -147,18 +147,26 @@ NTSTATUS Read(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
   NTSTATUS status = STATUS_UNSUCCESSFUL;
   int nsec, i, PESIGN = 0x00004550;
-  WORD DOSMAGIC = 0x5A4D;
+  union {
+    DWORD highlow;
+    struct {
+      WORD low;
+      WORD high;
+    } split;  
+  } delta;
+  WORD offset, DOSMAGIC = 0x5A4D;
   PIO_STACK_LOCATION pIoStackIrp = IoGetCurrentIrpStackLocation(Irp);
   PCHAR OutBuffer = NULL;
   HashReqData *hri;
   PEPROCESS proc;
   KAPC_STATE apc_state;
   PLIST_ENTRY ModuleLE, ProcessLE;
-  DWORD PTR32;
-  UNICODE_STRING DllName;
+  DWORD RelocSectionRVA, RelocSectionSize;
+  char PageRVA, BlockSize, Type;
   PIMAGE_DOS_HEADER dosh;
   PIMAGE_NT_HEADERS32 nth32;
   PIMAGE_NT_HEADERS64 nth64;
+
   PIMAGE_SECTION_HEADER ish;
   SHA1Context sha;
   
@@ -229,42 +237,34 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 	      nsec = nth64->FileHeader.NumberOfSections;
 	      ish = (char *) &(nth64->OptionalHeader) 
 		+ nth64->FileHeader.SizeOfOptionalHeader;
-	      for( i = 0; i < nsec; i++){
-		if(ish[i].Characteristics & IMAGE_SCN_CNT_CODE){
-		  DbgPrint("%p w/ sha1: ", ish[i].VirtualAddress + (char *)dosh);
-		  SHA1Reset(&sha);
-		  SHA1Input(&sha, 
-			    (PUCHAR *) (ish[i].VirtualAddress + (char *)dosh), 
-			    ish[i].Misc.VirtualSize);
-		  if(SHA1Result(&sha))
-		    DbgPrint("%X%X%X%X%X", sha.Message_Digest[0],
-			     sha.Message_Digest[1],
-			     sha.Message_Digest[2],
-			     sha.Message_Digest[3],
-			     sha.Message_Digest[4]);
-		      
-		}
-	      }		
+	      delta.highlow = (char *) nth64->OptionalHeader.ImageBase - ModuleEntry->ImgBase;
+	      RelocSectionRVA = nth64->OptionalHeader.DataDirectory[5].VirtualAddress;
+	      RelocSectionSize = nth64->OptionalHeader.DataDirectory[5].Size;
 	    }else if(nth32->FileHeader.Machine == 0x014c){
 	      nsec = nth32->FileHeader.NumberOfSections;
 	      ish = (char *) &(nth32->OptionalHeader) 
 		+ nth32->FileHeader.SizeOfOptionalHeader;
-	      for( i = 0; i < nsec; i++){
-		if(ish[i].Characteristics & IMAGE_SCN_CNT_CODE){
-		  DbgPrint("%p w/ sha1: ", ish[i].VirtualAddress + (char *)dosh);
-		  SHA1Reset(&sha);
-		  SHA1Input(&sha, 
-			    (PUCHAR *) (ish[i].VirtualAddress + (char *)dosh), 
-			    ish[i].Misc.VirtualSize);
-		  if(SHA1Result(&sha))
-		    DbgPrint("%X%X%X%X%X", sha.Message_Digest[0],
-			     sha.Message_Digest[1],
-			     sha.Message_Digest[2],
-			     sha.Message_Digest[3],
-			     sha.Message_Digest[4]);
-		}
-	      }
+	      delta.highlow = (char *) nth32->OptionalHeader.ImageBase - ModuleEntry->ImgBase;
+	      RelocSectionRVA = nth32->OptionalHeader.DataDirectory[5].VirtualAddress;
+	      RelocSectionSize = nth32->OptionalHeader.DataDirectory[5].Size;
 	    }else DbgPrint("Probably itanium :-)\n");
+	    
+	    for( i = 0; i < nsec; i++){
+	      if(ish[i].Characteristics & IMAGE_SCN_CNT_CODE){
+		DbgPrint("%p w/ sha1: ", ish[i].VirtualAddress + (char *)dosh);
+		SHA1Reset(&sha);
+		SHA1Input(&sha, 
+			  (PUCHAR *) (ish[i].VirtualAddress + (char *)dosh), 
+			  ish[i].Misc.VirtualSize);
+		if(SHA1Result(&sha))
+		  DbgPrint("%X%X%X%X%X", sha.Message_Digest[0],
+			   sha.Message_Digest[1],
+			   sha.Message_Digest[2],
+			   sha.Message_Digest[3],
+			   sha.Message_Digest[4]);
+		      
+	      }
+	    }	   
 	  }
 	  KeUnstackDetachProcess(&apc_state);
 	  ObDereferenceObject(proc);
