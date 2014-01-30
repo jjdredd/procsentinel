@@ -154,15 +154,19 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
       WORD high;
     } split;  
   } delta;
-  WORD offset, DOSMAGIC = 0x5A4D;
+  struct {
+    DWORD PageRVA;
+    DWORD  BlockSize;
+  } *RelocBlockHead;
+  WORD *RelocBlock, offset, DOSMAGIC = 0x5A4D;
   PIO_STACK_LOCATION pIoStackIrp = IoGetCurrentIrpStackLocation(Irp);
-  PCHAR OutBuffer = NULL;
+  PCHAR OutBuffer = NULL, FixedSection;
   HashReqData *hri;
   PEPROCESS proc;
   KAPC_STATE apc_state;
   PLIST_ENTRY ModuleLE, ProcessLE;
-  DWORD RelocSectionRVA, RelocSectionSize;
-  char PageRVA, BlockSize, Type;
+  DWORD RelocSectionRVA, RelocSectionSize, VarSectionSize;
+  char Type;
   PIMAGE_DOS_HEADER dosh;
   PIMAGE_NT_HEADERS32 nth32;
   PIMAGE_NT_HEADERS64 nth64;
@@ -248,9 +252,24 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 	      RelocSectionRVA = nth32->OptionalHeader.DataDirectory[5].VirtualAddress;
 	      RelocSectionSize = nth32->OptionalHeader.DataDirectory[5].Size;
 	    }else DbgPrint("Probably itanium :-)\n");
-	    
 	    for( i = 0; i < nsec; i++){
 	      if(ish[i].Characteristics & IMAGE_SCN_CNT_CODE){
+		FixedSection = ExAllocatePoolWithTag(PagedPool, ish[i].Misc.VirtualSize, TAG);
+		RtlCopyMemory(FixedSection, 
+			      ish[i].VirtualAddress + (char *)dosh, ish[i].Misc.VirtualSize);
+		VarSectionSize = 0;
+		while(VarSectionSize < RelocSectionSize){
+		  VarBlockSize = 0;
+		  RelocBlockHead = RelocSectionRVA + (char *)VarSectionSize + (char *)dosh;
+		  RelocBlock = (char *)RelocBlockHead + sizeof(RelocBlockHead);
+		  for(NBlock = 0; NBlock*sizeof(WORD) < RelocBlockHead->BlockSize;){
+		    Type = offset = 0;
+		    Type = (RelocBlock[NBlock] & 0xF000) >> 12;
+		    offset = RelocBlock[NBlock] & 0xFFF;
+		    
+		  }
+		  VarSectionSize += RelocBlockHead->BlockSize;
+		}  
 		DbgPrint("%p w/ sha1: ", ish[i].VirtualAddress + (char *)dosh);
 		SHA1Reset(&sha);
 		SHA1Input(&sha, 
@@ -263,6 +282,7 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 			   sha.Message_Digest[3],
 			   sha.Message_Digest[4]);
 		      
+		
 	      }
 	    }	   
 	  }
