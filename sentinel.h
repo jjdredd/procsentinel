@@ -251,6 +251,12 @@ typedef struct _IMAGE_SECTION_HEADER {
 
 
 #define TAG 'jd'
+#define IMAGE_REL_BASED_ABSOLUTE 0
+#define IMAGE_REL_BASED_HIGH 1
+#define IMAGE_REL_BASED_LOW 2
+#define IMAGE_REL_BASED_HIGHLOW 3
+#define IMAGE_REL_BASED_HIGHADJ 4
+#define IMAGE_REL_BASED_DIR64 10
 
 typedef struct{
   int pid; // long???
@@ -269,6 +275,24 @@ typedef struct{
   HANDLE pid;
   LIST_ENTRY ModuleListHead;
 } PROC_ENTRY;
+typedef struct{
+  DWORD PageRVA;
+  DWORD  BlockSize;
+} BASE_RELOCATION_BLOCK_HEAD;
+typedef union{
+  DWORD highlow;
+  struct {
+    WORD low;
+    WORD high;
+  } split;
+} DWORD_SPLIT;
+typedef union{
+  LONGLONG highlow;
+  struct {
+    DWORD_SPLIT low;
+    DWORD_SPLIT high;
+  } split;
+} QWORD_SPLIT;
 
 NTSTATUS Read(PDEVICE_OBJECT, PIRP);
 NTSTATUS Create(PDEVICE_OBJECT, PIRP);

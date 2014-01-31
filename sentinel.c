@@ -146,18 +146,10 @@ NTSTATUS Read(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 
 NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
   NTSTATUS status = STATUS_UNSUCCESSFUL;
-  int nsec, i, PESIGN = 0x00004550;
-  union {
-    DWORD highlow;
-    struct {
-      WORD low;
-      WORD high;
-    } split;  
-  } delta;
-  struct {
-    DWORD PageRVA;
-    DWORD  BlockSize;
-  } *RelocBlockHead;
+  int nsec, i, NBlock, PESIGN = 0x00004550;
+  DWORD_SPLIT delta;
+  QWORD_SPLIT *FixedReloc;
+  BASE_RELOCATION_BLOCK_HEAD *RelocBlockHead;
   WORD *RelocBlock, offset, DOSMAGIC = 0x5A4D;
   PIO_STACK_LOCATION pIoStackIrp = IoGetCurrentIrpStackLocation(Irp);
   PCHAR OutBuffer = NULL, FixedSection;
@@ -254,21 +246,57 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 	    }else DbgPrint("Probably itanium :-)\n");
 	    for( i = 0; i < nsec; i++){
 	      if(ish[i].Characteristics & IMAGE_SCN_CNT_CODE){
+		/* get ready to fix back the fixups */
 		FixedSection = ExAllocatePoolWithTag(PagedPool, ish[i].Misc.VirtualSize, TAG);
 		RtlCopyMemory(FixedSection, 
 			      ish[i].VirtualAddress + (char *)dosh, ish[i].Misc.VirtualSize);
-		VarSectionSize = 0;
-		while(VarSectionSize < RelocSectionSize){
-		  VarBlockSize = 0;
-		  RelocBlockHead = RelocSectionRVA + (char *)VarSectionSize + (char *)dosh;
+		/* check if we really need a relocation fixback */
+		for(VarSectionSize = 0; VarSectionSize < RelocSectionSize;
+		    VarSectionSize += RelocBlockHead->BlockSize){
+		  /* handy info at the beginning of each block */
+		  RelocBlockHead = RelocSectionRVA + VarSectionSize + (char *)dosh;
 		  RelocBlock = (char *)RelocBlockHead + sizeof(RelocBlockHead);
-		  for(NBlock = 0; NBlock*sizeof(WORD) < RelocBlockHead->BlockSize;){
-		    Type = offset = 0;
-		    Type = (RelocBlock[NBlock] & 0xF000) >> 12;
+		  for(NBlock = 0; NBlock*sizeof(WORD) < RelocBlockHead->BlockSize; NBlock++){
+		    /* NBlock++ bc most relocation types occupy 1 slot */
+		    Type = offset = 0; /* paranoid? */
+		    /* type of reloc to apply - the high 4 bits of the word field */
+		    Type = RelocBlock[NBlock] >> 12;
+		    /* offset in page described by PageRVA in reloc block header 
+		       - low 12 bits */
 		    offset = RelocBlock[NBlock] & 0xFFF;
-		    
+		    /* calculate address within our temp buffer */
+		    /* does this reloc belong to our section */
+		    if( (RelocBlockHead->PageRVA + offset < ish[i].VirtualAddress)
+			|| (RelocBlockHead->PageRVA + offset 
+			    > ish[i].VirtualAddress + ish[i].Misc.VirtualSize) )
+		      continue; /* don't drop, useful relocs might be further on */
+		    FixedReloc = FixedSection + RelocBlockHead->PageRVA + offset 
+		      - (char *)ish[i].VirtualAddress; 
+		    switch(Type){
+		    case IMAGE_REL_BASED_ABSOLUTE:
+		      break;
+		    case IMAGE_REL_BASED_HIGHADJ:
+		      DbgPrint("!!FIXME: IMAGE_REL_BASED_HIGHADJ\n");
+		      NBlock++; /* this one occupies 2 slots I hope this one won't show up*/
+		      break;
+		    case IMAGE_REL_BASED_HIGH:
+		      FixedReloc->split.low.split.low -= delta.split.high;
+		      break;
+		    case IMAGE_REL_BASED_LOW:
+		      FixedReloc->split.low.split.low -= delta.split.low;
+		      break;
+		    case IMAGE_REL_BASED_HIGHLOW:
+		      FixedReloc->split.low.highlow -= delta.highlow;
+		      break;
+		    case IMAGE_REL_BASED_DIR64:
+		      /* can't remember a word for a shitty code structures */
+		      FixedReloc->highlow -= delta.highlow;
+		      break;
+		    default:
+		      DbgPrint("!!FIXME: unanticipated reloc type: %i\n", Type);
+		      break;
+		    }
 		  }
-		  VarSectionSize += RelocBlockHead->BlockSize;
 		}  
 		DbgPrint("%p w/ sha1: ", ish[i].VirtualAddress + (char *)dosh);
 		SHA1Reset(&sha);
@@ -282,7 +310,7 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 			   sha.Message_Digest[3],
 			   sha.Message_Digest[4]);
 		      
-		
+		ExFreePoolWithTag(FixedSection, TAG);
 	      }
 	    }	   
 	  }
