@@ -257,6 +257,9 @@ typedef struct _IMAGE_SECTION_HEADER {
 #define IMAGE_REL_BASED_HIGHLOW 3
 #define IMAGE_REL_BASED_HIGHADJ 4
 #define IMAGE_REL_BASED_DIR64 10
+#define DOSMAGIC 0x5A4D
+#define PESIGN 0x00004550
+#define RELOC_DIR 5
 
 typedef struct{
   int pid; // long???

@@ -84,7 +84,7 @@ void LoadImageNotify(PUNICODE_STRING FullImgName,
   MODULE_ENTRY *ModuleEntry;
   if(DoesEndWith(FullImgName, &MainModuleName)){
     DbgPrint("%wZ loaded in %i\n @ 0x%X", FullImgName, PID,
-	     ImageInfo->ImageBase);
+	     ImageInfo->ImageBase); 
     if((ProcEntry = ExAllocatePoolWithTag(PagedPool, sizeof(PROC_ENTRY), TAG)) == NULL){
       DbgPrint("Couldn't allocate\n");
       return;
@@ -94,8 +94,8 @@ void LoadImageNotify(PUNICODE_STRING FullImgName,
     InsertTailList(&ProcessListHead, &(ProcEntry->PList));
   }
   if(ProcEntry = LocatePIDEntry(&ProcessListHead, PID)){
-    DbgPrint("%wZ loaded in %i\n @ 0x%X", FullImgName, PID,
-	     ImageInfo->ImageBase);
+    /* DbgPrint("%wZ loaded in %i\n @ 0x%X", FullImgName, PID,
+       ImageInfo->ImageBase); */
     if((ModuleEntry = AllocModuleEntry()) == NULL){
        DbgPrint("Couldn't allocate\n");
       return;
@@ -109,6 +109,7 @@ void LoadImageNotify(PUNICODE_STRING FullImgName,
 void ProcessNotify(HANDLE PPID, HANDLE PID, BOOLEAN Create){
   PROC_ENTRY *ProcEntry;
   if(!Create && (ProcEntry = LocatePIDEntry(&ProcessListHead, PID))){
+    /* He's dead, Jim */
     DbgPrint("died subj %i", PID);
     RemoveProcessEntry(ProcEntry);
   }
@@ -146,11 +147,11 @@ NTSTATUS Read(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 
 NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
   NTSTATUS status = STATUS_UNSUCCESSFUL;
-  int nsec, i, NBlock, PESIGN = 0x00004550;
+  int nsec, i, NBlock;
   DWORD_SPLIT delta;
   QWORD_SPLIT *FixedReloc;
   BASE_RELOCATION_BLOCK_HEAD *RelocBlockHead;
-  WORD *RelocBlock, offset, DOSMAGIC = 0x5A4D;
+  WORD *RelocBlock, offset;
   PIO_STACK_LOCATION pIoStackIrp = IoGetCurrentIrpStackLocation(Irp);
   PCHAR OutBuffer = NULL, FixedSection;
   HashReqData *hri;
@@ -233,16 +234,16 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 	      nsec = nth64->FileHeader.NumberOfSections;
 	      ish = (char *) &(nth64->OptionalHeader) 
 		+ nth64->FileHeader.SizeOfOptionalHeader;
-	      delta.highlow = (char *) nth64->OptionalHeader.ImageBase - ModuleEntry->ImgBase;
-	      RelocSectionRVA = nth64->OptionalHeader.DataDirectory[5].VirtualAddress;
-	      RelocSectionSize = nth64->OptionalHeader.DataDirectory[5].Size;
+	      delta.highlow = (char *) ModuleEntry->ImgBase - nth64->OptionalHeader.ImageBase;
+	      RelocSectionRVA = nth64->OptionalHeader.DataDirectory[RELOC_DIR].VirtualAddress;
+	      RelocSectionSize = nth64->OptionalHeader.DataDirectory[RELOC_DIR].Size;
 	    }else if(nth32->FileHeader.Machine == 0x014c){
 	      nsec = nth32->FileHeader.NumberOfSections;
 	      ish = (char *) &(nth32->OptionalHeader) 
 		+ nth32->FileHeader.SizeOfOptionalHeader;
-	      delta.highlow = (char *) nth32->OptionalHeader.ImageBase - ModuleEntry->ImgBase;
-	      RelocSectionRVA = nth32->OptionalHeader.DataDirectory[5].VirtualAddress;
-	      RelocSectionSize = nth32->OptionalHeader.DataDirectory[5].Size;
+	      delta.highlow = (char *) ModuleEntry->ImgBase - nth32->OptionalHeader.ImageBase;
+	      RelocSectionRVA = nth32->OptionalHeader.DataDirectory[RELOC_DIR].VirtualAddress;
+	      RelocSectionSize = nth32->OptionalHeader.DataDirectory[RELOC_DIR].Size;
 	    }else DbgPrint("Probably itanium :-)\n");
 	    for( i = 0; i < nsec; i++){
 	      if(ish[i].Characteristics & IMAGE_SCN_CNT_CODE){
@@ -250,13 +251,15 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 		FixedSection = ExAllocatePoolWithTag(PagedPool, ish[i].Misc.VirtualSize, TAG);
 		RtlCopyMemory(FixedSection, 
 			      ish[i].VirtualAddress + (char *)dosh, ish[i].Misc.VirtualSize);
-		/* check if we really need a relocation fixback */
+		/* !TODO: check if we really need a relocation fixback */
 		for(VarSectionSize = 0; VarSectionSize < RelocSectionSize;
 		    VarSectionSize += RelocBlockHead->BlockSize){
 		  /* handy info at the beginning of each block */
 		  RelocBlockHead = RelocSectionRVA + VarSectionSize + (char *)dosh;
 		  RelocBlock = (char *)RelocBlockHead + sizeof(RelocBlockHead);
-		  for(NBlock = 0; NBlock*sizeof(WORD) < RelocBlockHead->BlockSize; NBlock++){
+		  for(NBlock = 0; 
+		      NBlock*sizeof(WORD) +  sizeof(RelocBlockHead) < RelocBlockHead->BlockSize;
+		      NBlock++){
 		    /* NBlock++ bc most relocation types occupy 1 slot */
 		    Type = offset = 0; /* paranoid? */
 		    /* type of reloc to apply - the high 4 bits of the word field */
