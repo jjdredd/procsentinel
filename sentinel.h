@@ -290,7 +290,7 @@ typedef union{
   } split;
 } DWORD_SPLIT;
 typedef union{
-  LONGLONG highlow;
+  LONG64 highlow;
   struct {
     DWORD_SPLIT low;
     DWORD_SPLIT high;
