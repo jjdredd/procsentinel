@@ -303,9 +303,7 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 		}  
 		DbgPrint("%p w/ sha1: ", ish[i].VirtualAddress + (char *)dosh);
 		SHA1Reset(&sha);
-		SHA1Input(&sha, 
-			  (PUCHAR *) (ish[i].VirtualAddress + (char *)dosh), 
-			  ish[i].Misc.VirtualSize);
+		SHA1Input(&sha, (PUCHAR *) FixedSection, ish[i].Misc.VirtualSize);
 		if(SHA1Result(&sha))
 		  DbgPrint("%X%X%X%X%X", sha.Message_Digest[0],
 			   sha.Message_Digest[1],
