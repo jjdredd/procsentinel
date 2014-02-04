@@ -282,20 +282,6 @@ typedef struct{
   DWORD PageRVA;
   DWORD  BlockSize;
 } BASE_RELOCATION_BLOCK_HEAD;
-typedef union{
-  DWORD highlow;
-  struct {
-    WORD low;
-    WORD high;
-  } split;
-} DWORD_SPLIT;
-typedef union{
-  LONG64 highlow;
-  struct {
-    DWORD_SPLIT low;
-    DWORD_SPLIT high;
-  } split;
-} QWORD_SPLIT;
 
 NTSTATUS Read(PDEVICE_OBJECT, PIRP);
 NTSTATUS Create(PDEVICE_OBJECT, PIRP);

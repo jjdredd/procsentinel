@@ -148,8 +148,8 @@ NTSTATUS Read(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
   NTSTATUS status = STATUS_UNSUCCESSFUL;
   int nsec, i, NBlock;
-  DWORD_SPLIT delta;
-  QWORD_SPLIT *FixedReloc;
+  PVOID FixedReloc;
+  LONG64 delta;
   BASE_RELOCATION_BLOCK_HEAD *RelocBlockHead;
   WORD *RelocBlock, offset;
   PIO_STACK_LOCATION pIoStackIrp = IoGetCurrentIrpStackLocation(Irp);
@@ -234,14 +234,14 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 	      nsec = nth64->FileHeader.NumberOfSections;
 	      ish = (char *) &(nth64->OptionalHeader) 
 		+ nth64->FileHeader.SizeOfOptionalHeader;
-	      delta.highlow = (char *) ModuleEntry->ImgBase - nth64->OptionalHeader.ImageBase;
+	      delta = (LONG64)ModuleEntry->ImgBase - nth64->OptionalHeader.ImageBase;
 	      RelocSectionRVA = nth64->OptionalHeader.DataDirectory[RELOC_DIR].VirtualAddress;
 	      RelocSectionSize = nth64->OptionalHeader.DataDirectory[RELOC_DIR].Size;
 	    }else if(nth32->FileHeader.Machine == 0x014c){
 	      nsec = nth32->FileHeader.NumberOfSections;
 	      ish = (char *) &(nth32->OptionalHeader) 
 		+ nth32->FileHeader.SizeOfOptionalHeader;
-	      delta.highlow = (char *) ModuleEntry->ImgBase - nth32->OptionalHeader.ImageBase;
+	      delta = (LONG64)ModuleEntry->ImgBase - nth32->OptionalHeader.ImageBase;
 	      RelocSectionRVA = nth32->OptionalHeader.DataDirectory[RELOC_DIR].VirtualAddress;
 	      RelocSectionSize = nth32->OptionalHeader.DataDirectory[RELOC_DIR].Size;
 	    }else DbgPrint("Probably itanium :-)\n");
@@ -280,20 +280,20 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 		      break;
 		    case IMAGE_REL_BASED_HIGHADJ:
 		      DbgPrint("!!FIXME: IMAGE_REL_BASED_HIGHADJ\n");
-		      NBlock++; /* this one occupies 2 slots I hope this one won't show up*/
+		      NBlock++; /* this one occupies 2 slots I hope it won't show up*/
 		      break;
 		    case IMAGE_REL_BASED_HIGH:
-		      FixedReloc->split.low.split.low -= delta.split.high;
+		      *(WORD *)FixedReloc -= (WORD) ((delta >> 16) & 0xFFFF) ;
 		      break;
 		    case IMAGE_REL_BASED_LOW:
-		      FixedReloc->split.low.split.low -= delta.split.low;
+		      *(WORD *)FixedReloc -= (WORD) (delta & 0xFFFF);
 		      break;
 		    case IMAGE_REL_BASED_HIGHLOW:
-		      FixedReloc->split.low.highlow -= delta.highlow;
+		      *(DWORD *)FixedReloc -= (DWORD) (delta & 0xFFFFFFFF);
 		      break;
 		    case IMAGE_REL_BASED_DIR64:
 		      /* can't remember a word for a shitty code structures */
-		      FixedReloc->highlow -= delta.highlow;
+		      *(LONG64 *)FixedReloc -= delta;
 		      break;
 		    default:
 		      DbgPrint("!!FIXME: unanticipated reloc type: %i\n", Type);
@@ -305,7 +305,7 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 		SHA1Reset(&sha);
 		SHA1Input(&sha, (PUCHAR *) FixedSection, ish[i].Misc.VirtualSize);
 		if(SHA1Result(&sha))
-		  DbgPrint("%X%X%X%X%X", sha.Message_Digest[0],
+		  DbgPrint("%X%X%X%X%X\n", sha.Message_Digest[0],
 			   sha.Message_Digest[1],
 			   sha.Message_Digest[2],
 			   sha.Message_Digest[3],
