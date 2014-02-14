@@ -234,14 +234,14 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 	      nsec = nth64->FileHeader.NumberOfSections;
 	      ish = (char *) &(nth64->OptionalHeader) 
 		+ nth64->FileHeader.SizeOfOptionalHeader;
-	      delta = (LONG64)ModuleEntry->ImgBase - nth64->OptionalHeader.ImageBase;
+	      delta = (INT_PTR)ModuleEntry->ImgBase - nth64->OptionalHeader.ImageBase;
 	      RelocSectionRVA = nth64->OptionalHeader.DataDirectory[RELOC_DIR].VirtualAddress;
 	      RelocSectionSize = nth64->OptionalHeader.DataDirectory[RELOC_DIR].Size;
 	    }else if(nth32->FileHeader.Machine == 0x014c){
 	      nsec = nth32->FileHeader.NumberOfSections;
 	      ish = (char *) &(nth32->OptionalHeader) 
 		+ nth32->FileHeader.SizeOfOptionalHeader;
-	      delta = (LONG64)ModuleEntry->ImgBase - nth32->OptionalHeader.ImageBase;
+	      delta = (INT_PTR)ModuleEntry->ImgBase - nth32->OptionalHeader.ImageBase;
 	      RelocSectionRVA = nth32->OptionalHeader.DataDirectory[RELOC_DIR].VirtualAddress;
 	      RelocSectionSize = nth32->OptionalHeader.DataDirectory[RELOC_DIR].Size;
 	    }else DbgPrint("Probably itanium :-)\n");
@@ -283,17 +283,17 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 		      NBlock++; /* this one occupies 2 slots I hope it won't show up*/
 		      break;
 		    case IMAGE_REL_BASED_HIGH:
-		      *(WORD *)FixedReloc -= (WORD) ((delta >> 16) & 0xFFFF) ;
+		      *(short *)FixedReloc = 0;// -= (short) ((delta >> 16) & 0xFFFF) ;
 		      break;
 		    case IMAGE_REL_BASED_LOW:
-		      *(WORD *)FixedReloc -= (WORD) (delta & 0xFFFF);
+		      *(short *)FixedReloc = 0;// -= (short) (delta & 0xFFFF);
 		      break;
 		    case IMAGE_REL_BASED_HIGHLOW:
-		      *(DWORD *)FixedReloc -= (DWORD) (delta & 0xFFFFFFFF);
+		      *(int *)FixedReloc = 0;// -= (int) (delta & 0xFFFFFFFF);
 		      break;
 		    case IMAGE_REL_BASED_DIR64:
 		      /* can't remember a word for a shitty code structures */
-		      *(LONG64 *)FixedReloc -= delta;
+		      *(INT_PTR *)FixedReloc = 0;// -= delta;
 		      break;
 		    default:
 		      DbgPrint("!!FIXME: unanticipated reloc type: %i\n", Type);
