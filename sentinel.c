@@ -4,7 +4,7 @@
 
 int RegistrationHandle;
 //int CBCKRegistered;
-UNICODE_STRING usDosDeviceName, MainModuleName;
+UNICODE_STRING usDosDeviceName, MainModuleName, GameUIModuleName;
 LIST_ENTRY ProcessListHead;
 
 NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath){
@@ -18,6 +18,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
   RtlInitUnicodeString(&usDriverName, L"\\Device\\Sentinel");
   RtlInitUnicodeString(&usDosDeviceName, L"\\DosDevices\\Sentinel");
   RtlInitUnicodeString(&MainModuleName, L"hl.exe");
+  RtlInitUnicodeString(&GameUIModuleName, L"d3dim.dll");
   DbgPrint("Driver Entry \n");
   NtStatus = IoCreateDevice(pDriverObject, 0,
 			    &usDriverName,
@@ -234,6 +235,7 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 	      nsec = nth64->FileHeader.NumberOfSections;
 	      ish = (char *) &(nth64->OptionalHeader) 
 		+ nth64->FileHeader.SizeOfOptionalHeader;
+	      /* TODO GET DESIRED IMAGE BASE FROM FILE ON DISK! YES, ON DISK! */
 	      delta = (INT_PTR)ModuleEntry->ImgBase - nth64->OptionalHeader.ImageBase;
 	      RelocSectionRVA = nth64->OptionalHeader.DataDirectory[RELOC_DIR].VirtualAddress;
 	      RelocSectionSize = nth64->OptionalHeader.DataDirectory[RELOC_DIR].Size;
@@ -248,6 +250,7 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 	    for( i = 0; i < nsec; i++){
 	      if(ish[i].Characteristics & IMAGE_SCN_CNT_CODE){
 		/* get ready to fix back the fixups */
+		/* !FIXME! use max(VirtualSize, SizeOfRawData) here and in hashing */
 		FixedSection = ExAllocatePoolWithTag(PagedPool, ish[i].Misc.VirtualSize, TAG);
 		RtlCopyMemory(FixedSection, 
 			      ish[i].VirtualAddress + (char *)dosh, ish[i].Misc.VirtualSize);
@@ -283,17 +286,17 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 		      NBlock++; /* this one occupies 2 slots I hope it won't show up*/
 		      break;
 		    case IMAGE_REL_BASED_HIGH:
-		      *(short *)FixedReloc = 0;// -= (short) ((delta >> 16) & 0xFFFF) ;
+		      *(short *)FixedReloc = 0; // -= (short) ((delta >> 16) & 0xFFFF) ;
 		      break;
 		    case IMAGE_REL_BASED_LOW:
-		      *(short *)FixedReloc = 0;// -= (short) (delta & 0xFFFF);
+		      *(short *)FixedReloc = 0; // -= (short) (delta & 0xFFFF);
 		      break;
 		    case IMAGE_REL_BASED_HIGHLOW:
-		      *(int *)FixedReloc = 0;// -= (int) (delta & 0xFFFFFFFF);
+		      *(int *)FixedReloc = 0; // -= (int) (delta & 0xFFFFFFFF);
 		      break;
 		    case IMAGE_REL_BASED_DIR64:
 		      /* can't remember a word for a shitty code structures */
-		      *(INT_PTR *)FixedReloc = 0;// -= delta;
+		      *(INT_PTR *)FixedReloc  = 0;//-= delta;
 		      break;
 		    default:
 		      DbgPrint("!!FIXME: unanticipated reloc type: %i\n", Type);
@@ -310,7 +313,13 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 			   sha.Message_Digest[2],
 			   sha.Message_Digest[3],
 			   sha.Message_Digest[4]);
-		      
+		/* test dump 
+		if(DoesEndWith(&(ModuleEntry->FullImgName), &GameUIModuleName)){
+		  RtlCopyMemory(OutBuffer, FixedSection, 
+				ish[i].Misc.VirtualSize);
+		  DbgPrint("DELTA = 0X%X", delta);
+		}
+		*/
 		ExFreePoolWithTag(FixedSection, TAG);
 	      }
 	    }	   
