@@ -36,6 +36,8 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
   pDeviceObject->Flags |= DO_DIRECT_IO;
   pDeviceObject->Flags &= (~DO_DEVICE_INITIALIZING);
 
+  /*  also set a thread notify routine  */
+
   NtStatus = PsSetLoadImageNotifyRoutine(&LoadImageNotify);
   if(!NT_SUCCESS(NtStatus)){
     DbgPrint("couldn't set imageload notify routine\n");
@@ -64,15 +66,23 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
   */
   CallbackRegistration.OperationRegistration = &OperationRegistration;
   //match unregister in the unload function
-  //NtStatus = ObRegisterCallbacks(&CallbackRegistration, &RegistrationHandle);
+  NtStatus = ObRegisterCallbacks(&CallbackRegistration, &RegistrationHandle);
   DbgPrint("0X%X\n", NtStatus);
   return NtStatus;
 }
 
 OB_PREOP_CALLBACK_STATUS PreCallback(PVOID Context, 
 				     POB_PRE_OPERATION_INFORMATION OpInfo){
-
-  DbgPrint("Trying to open pid %li\n", PsGetProcessId(OpInfo->Object));
+  HANDLE pid;
+  if(OpInfo->ObjectType == PsProcessType){
+    pid = PsGetProcessId(OpInfo->Object);
+    DbgPrint("Trying to open PID %li\n", pid);
+    
+  }else if(OpInfo->ObjectType == PsThreadType){
+    pid = PsGetThreadId(OpInfo->Object);
+    DbgPrint("Trying to open TID %li\n", pid);
+  }
+  
   return STATUS_SUCCESS;
 }
 void PostCallback(PVOID Context, POB_POST_OPERATION_INFORMATION OpInfo){
@@ -255,6 +265,7 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 		RtlCopyMemory(FixedSection, 
 			      ish[i].VirtualAddress + (char *)dosh, ish[i].Misc.VirtualSize);
 		/* !TODO: check if we really need a relocation fixback */
+		/* !TODO: refactor and put in a seperate procedure */
 		for(VarSectionSize = 0; VarSectionSize < RelocSectionSize;
 		    VarSectionSize += RelocBlockHead->BlockSize){
 		  /* handy info at the beginning of each block */
@@ -365,7 +376,7 @@ NTSTATUS NotImplemented(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 
 void Dtor(PDRIVER_OBJECT  DriverObject){
   DbgPrint("Dtor Called \n");
-  //ObUnRegisterCallbacks(&RegistrationHandle);
+  ObUnRegisterCallbacks(&RegistrationHandle);
   //free process list stuff here?
   PsRemoveLoadImageNotifyRoutine(&LoadImageNotify);
   PsSetCreateProcessNotifyRoutine(&ProcessNotify, 1);
