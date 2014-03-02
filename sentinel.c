@@ -74,10 +74,11 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
 OB_PREOP_CALLBACK_STATUS PreCallback(PVOID Context, 
 				     POB_PRE_OPERATION_INFORMATION OpInfo){
   HANDLE pid;
+  OB_PRE_CREATE_HANDLE_INFORMATION    CreateInfo;
+  OB_PRE_DUPLICATE_HANDLE_INFORMATION DupInfo;
   if(OpInfo->ObjectType == PsProcessType){
     pid = PsGetProcessId(OpInfo->Object);
     DbgPrint("Trying to open PID %li\n", pid);
-    
   }else if(OpInfo->ObjectType == PsThreadType){
     pid = PsGetThreadId(OpInfo->Object);
     DbgPrint("Trying to open TID %li\n", pid);
