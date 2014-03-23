@@ -2,8 +2,8 @@
 #include "sha1.h"
 #include "util.h"
 
-int RegistrationHandle;
-//int CBCKRegistered;
+int CBCKRegistered = 0;
+PVOID RegistrationHandle;
 UNICODE_STRING usDosDeviceName, MainModuleName, GameUIModuleName;
 LIST_ENTRY ProcessListHead;
 
@@ -46,13 +46,14 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
   NtStatus = PsSetCreateProcessNotifyRoutine(&ProcessNotify, 0);
   if(!NT_SUCCESS(NtStatus)){
     DbgPrint("couldn't set create process notify routine\n");
+    /* unset image notify routine here? */
    return STATUS_UNSUCCESSFUL;
   }
   InitializeListHead(&ProcessListHead);
     
   RtlZeroMemory(&CallbackRegistration, sizeof(OB_CALLBACK_REGISTRATION));
   RtlZeroMemory(&OperationRegistration, sizeof(OB_OPERATION_REGISTRATION));
-  RtlInitUnicodeString(&Altitude, L"idkwat2puthere");  //adjust later
+  RtlInitUnicodeString(&Altitude, L"42000");  //adjust later
   OperationRegistration.ObjectType = PsProcessType;
   OperationRegistration.Operations 
     = OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE;
@@ -67,8 +68,9 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
   CallbackRegistration.OperationRegistration = &OperationRegistration;
   //match unregister in the unload function
   NtStatus = ObRegisterCallbacks(&CallbackRegistration, &RegistrationHandle);
-  DbgPrint("0X%X\n", NtStatus);
-  return NtStatus;
+  if(NT_SUCCESS(NtStatus)) CBCKRegistered = 1;
+  else DbgPrint("ObRegisterCallbacks() failed with 0X%X\n", NtStatus);
+  return STATUS_SUCCESS; //NtStatus;
 }
 
 OB_PREOP_CALLBACK_STATUS PreCallback(PVOID Context, 
@@ -76,13 +78,18 @@ OB_PREOP_CALLBACK_STATUS PreCallback(PVOID Context,
   HANDLE pid;
   OB_PRE_CREATE_HANDLE_INFORMATION    CreateInfo;
   OB_PRE_DUPLICATE_HANDLE_INFORMATION DupInfo;
-  if(OpInfo->ObjectType == PsProcessType){
-    pid = PsGetProcessId(OpInfo->Object);
-    DbgPrint("Trying to open PID %li\n", pid);
-  }else if(OpInfo->ObjectType == PsThreadType){
-    pid = PsGetThreadId(OpInfo->Object);
-    DbgPrint("Trying to open TID %li\n", pid);
-  }
+  /* if(OpInfo->ObjectType == PsProcessType){ */
+  /*   DbgPrint("opening process handle\n"); */
+  /*   pid = PsGetProcessId(OpInfo->Object); */
+  /*   DbgPrint("Trying to open PID %li\n", pid); */
+  /* }else if(OpInfo->ObjectType == PsThreadType){ */
+  /*   DbgPrint("opening pocess handle\n"); */
+  /*   pid = PsGetThreadId(OpInfo->Object); */
+  /*   DbgPrint("Trying to open TID %li\n", pid); */
+  /* }else DbgPrint("unknown handle type %p %p %p\n", OpInfo->ObjectType, PsProcessType, PsThreadType); */
+  pid = PsGetProcessId(OpInfo->Object);
+  if(LocatePIDEntry(&ProcessListHead, pid))
+    DbgPrint("Trying to open subject pid %li\n", pid);
   
   return STATUS_SUCCESS;
 }
@@ -122,7 +129,7 @@ void ProcessNotify(HANDLE PPID, HANDLE PID, BOOLEAN Create){
   PROC_ENTRY *ProcEntry;
   if(!Create && (ProcEntry = LocatePIDEntry(&ProcessListHead, PID))){
     /* He's dead, Jim */
-    DbgPrint("died subj %i", PID);
+    DbgPrint("died subj %i\n", PID);
     RemoveProcessEntry(ProcEntry);
   }
   return;
@@ -271,7 +278,7 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 		    VarSectionSize += RelocBlockHead->BlockSize){
 		  /* handy info at the beginning of each block */
 		  RelocBlockHead = RelocSectionRVA + VarSectionSize + (char *)dosh;
-		  RelocBlock = (char *)RelocBlockHead + sizeof(RelocBlockHead);
+		  RelocBlock = (char *)RelocBlockHead + sizeof(BASE_RELOCATION_BLOCK_HEAD);
 		  for(NBlock = 0; 
 		      NBlock*sizeof(WORD) +  sizeof(RelocBlockHead) < RelocBlockHead->BlockSize;
 		      NBlock++){
@@ -377,7 +384,7 @@ NTSTATUS NotImplemented(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 
 void Dtor(PDRIVER_OBJECT  DriverObject){
   DbgPrint("Dtor Called \n");
-  ObUnRegisterCallbacks(&RegistrationHandle);
+  if(CBCKRegistered) ObUnRegisterCallbacks(RegistrationHandle);
   //free process list stuff here?
   PsRemoveLoadImageNotifyRoutine(&LoadImageNotify);
   PsSetCreateProcessNotifyRoutine(&ProcessNotify, 1);
