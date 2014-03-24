@@ -78,19 +78,26 @@ OB_PREOP_CALLBACK_STATUS PreCallback(PVOID Context,
   HANDLE pid;
   OB_PRE_CREATE_HANDLE_INFORMATION    CreateInfo;
   OB_PRE_DUPLICATE_HANDLE_INFORMATION DupInfo;
-  /* if(OpInfo->ObjectType == PsProcessType){ */
-  /*   DbgPrint("opening process handle\n"); */
-  /*   pid = PsGetProcessId(OpInfo->Object); */
-  /*   DbgPrint("Trying to open PID %li\n", pid); */
-  /* }else if(OpInfo->ObjectType == PsThreadType){ */
-  /*   DbgPrint("opening pocess handle\n"); */
-  /*   pid = PsGetThreadId(OpInfo->Object); */
-  /*   DbgPrint("Trying to open TID %li\n", pid); */
-  /* }else DbgPrint("unknown handle type %p %p %p\n", OpInfo->ObjectType, PsProcessType, PsThreadType); */
-  pid = PsGetProcessId(OpInfo->Object);
-  if(LocatePIDEntry(&ProcessListHead, pid))
-    DbgPrint("Trying to open subject pid %li\n", pid);
-  
+  /* do we really need the following check? rethink */ 
+  /* if( (OpInfo->Object == PsGetCurrentProcess()) 
+   *     || (OpInfo->KernelHandle == 1))
+   *   return STATUS_SUCCESS; */
+  if(OpInfo->ObjectType == *PsProcessType){
+    pid = PsGetProcessId(OpInfo->Object);
+    if(LocatePIDEntry(&ProcessListHead, pid))
+      DbgPrint("Trying to open process %li\n", pid);
+  }else if(OpInfo->ObjectType == *PsThreadType){
+    DbgPrint("opening pocess handle\n");
+    /* pid = PsGetThreadId(OpInfo->Object); */
+    /* !!! Use PsGetThreadProcessId !!!!!!! */
+    pid = PsGetThreadProcessId(OpInfo->Object);
+    if(LocatePIDEntry(&ProcessListHead, pid))
+      DbgPrint("Trying to open thread of process %li\n", pid);
+  }else DbgPrint("unknown handle type %p %p %p\n", OpInfo->ObjectType, PsProcessType, PsThreadType);
+  /* pid = PsGetProcessId(OpInfo->Object); */
+  /* if(LocatePIDEntry(&ProcessListHead, pid)) */
+  /*   DbgPrint("Trying to open subject pid %li\n", pid); */
+    
   return STATUS_SUCCESS;
 }
 void PostCallback(PVOID Context, POB_POST_OPERATION_INFORMATION OpInfo){
