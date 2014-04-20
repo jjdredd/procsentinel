@@ -1,6 +1,7 @@
 #include "sentinel.h"
 #include "sha1.h"
 #include "util.h"
+#include "callbacks.h"
 
 int CBCKRegistered = 0;
 PVOID RegistrationHandle;
@@ -54,6 +55,8 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
   RtlZeroMemory(&CallbackRegistration, sizeof(OB_CALLBACK_REGISTRATION));
   RtlZeroMemory(&OperationRegistration, sizeof(OB_OPERATION_REGISTRATION));
   RtlInitUnicodeString(&Altitude, L"42000");  //adjust later
+
+  /* ATTENTION!!! register PsThreadType too!! */
   OperationRegistration.ObjectType = PsProcessType;
   OperationRegistration.Operations 
     = OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE;
@@ -76,27 +79,47 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
 OB_PREOP_CALLBACK_STATUS PreCallback(PVOID Context, 
 				     POB_PRE_OPERATION_INFORMATION OpInfo){
   HANDLE pid;
-  OB_PRE_CREATE_HANDLE_INFORMATION    CreateInfo;
-  OB_PRE_DUPLICATE_HANDLE_INFORMATION DupInfo;
   /* do we really need the following check? rethink */ 
   /* if( (OpInfo->Object == PsGetCurrentProcess()) 
    *     || (OpInfo->KernelHandle == 1))
    *   return STATUS_SUCCESS; */
   if(OpInfo->ObjectType == *PsProcessType){
     pid = PsGetProcessId(OpInfo->Object);
-    if(LocatePIDEntry(&ProcessListHead, pid))
-      DbgPrint("Trying to open process %li\n", pid);
-  }else if(OpInfo->ObjectType == *PsThreadType){
+    if ( !LocatePIDEntry(&ProcessListHead, pid)
+	 || (pid == PsGetCurrentProcessId()) ) return STATUS_SUCCESS;
+    /* DbgPrint("Trying to open process %li\n", pid); */
+  }else if(OpInfo->ObjectType == *PsThreadType){ /* FIXME NEED to register this!!! */
     DbgPrint("opening pocess handle\n");
     /* pid = PsGetThreadId(OpInfo->Object); */
     /* !!! Use PsGetThreadProcessId !!!!!!! */
     pid = PsGetThreadProcessId(OpInfo->Object);
-    if(LocatePIDEntry(&ProcessListHead, pid))
-      DbgPrint("Trying to open thread of process %li\n", pid);
-  }else DbgPrint("unknown handle type %p %p %p\n", OpInfo->ObjectType, PsProcessType, PsThreadType);
+    if(!LocatePIDEntry(&ProcessListHead, pid)
+       || (pid == PsGetCurrentProcessId())) return STATUS_SUCCESS;
+    /* DbgPrint("Trying to open thread of process %li\n", pid); */
+  }else 
+    DbgPrint("unknown handle type %p %p %p\n", OpInfo->ObjectType,
+	     PsProcessType, PsThreadType);
   /* pid = PsGetProcessId(OpInfo->Object); */
   /* if(LocatePIDEntry(&ProcessListHead, pid)) */
   /*   DbgPrint("Trying to open subject pid %li\n", pid); */
+
+  switch(OpInfo->Operation){
+    /* DO NOT forget NOTting before ANDing */
+  case OB_OPERATION_HANDLE_CREATE:
+    OpInfo->Parameters->CreateHandleInformation.DesiredAccess
+      &= ~PROCESS_DESIRED_ACCESS_MASK;
+    OpInfo->Parameters->CreateHandleInformation.OriginalDesiredAccess
+      &= ~PROCESS_ORIGINAL_ACCESS_MASK;
+    break;
+  case OB_OPERATION_HANDLE_DUPLICATE:
+    OpInfo->Parameters->DuplicateHandleInformation.DesiredAccess
+      &= ~PROCESS_DESIRED_ACCESS_MASK;
+    OpInfo->Parameters->DuplicateHandleInformation.OriginalDesiredAccess
+      &= ~PROCESS_ORIGINAL_ACCESS_MASK;
+    break;
+  default: 			/* lol */
+    return STATUS_SUCCESS;
+  }
     
   return STATUS_SUCCESS;
 }

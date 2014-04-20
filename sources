@@ -2,6 +2,6 @@ TARGETNAME=sentinel
 TARGETTYPE=DRIVER
 TARGETPATH=obj
 
-INCLUDES= ..\..\..\inc sha1.h sentinel.h util.h
+INCLUDES= ..\..\..\inc sha1.h sentinel.h util.h callbacks.h
 SOURCES = sentinel.c sha1.c util.c
 LINKER_FLAGS=/INTEGRITYCHECK

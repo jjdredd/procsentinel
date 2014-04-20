@@ -1,5 +1,5 @@
-#ifndef SENTINEL_H
-#define SENTINEL_H
+#ifndef _SENTINEL_H_
+#define _SENTINEL_H_
 #include <Fltkernel.h>
 #include <windef.h>
 #include <ntdef.h>
