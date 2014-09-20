@@ -52,15 +52,15 @@ DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath){
   return NtStatus;
 }
 
-void LoadImageNotify(PUNICODE_STRING FullImgName,
-					  HANDLE PID,
-					  PIMAGE_INFO ImageInfo){
+void LoadImageNotify(PUNICODE_STRING FullImgName, HANDLE PID,
+		     PIMAGE_INFO ImageInfo){
   PROC_ENTRY *ProcEntry;
   MODULE_ENTRY *ModuleEntry;
   if(DoesEndWith(FullImgName, &MainModuleName)){
-    DbgPrint("%wZ loaded in %i\n @ 0x%X", FullImgName, PID,
+    DbgPrint("%wZ loaded in %i @ 0x%X", FullImgName, PID,
 	     ImageInfo->ImageBase); 
-    if((ProcEntry = ExAllocatePoolWithTag(PagedPool, sizeof(PROC_ENTRY), TAG)) == NULL){
+    if((ProcEntry = ExAllocatePoolWithTag(PagedPool,
+					  sizeof(PROC_ENTRY), TAG)) == NULL){
       DbgPrint("Couldn't allocate\n");
       return;
     }
@@ -184,125 +184,149 @@ NTSTATUS HandleIOCTL(PDEVICE_OBJECT  DriverObject, PIRP Irp){
 	  break;
 	}
 	DbgPrint("attaching to pid %i\n", ProcEntry->pid);
-	if(NT_SUCCESS(PsLookupProcessByProcessId(ProcEntry->pid, &proc))){
-	  KeStackAttachProcess(proc, &apc_state);
-	  for(ModuleLE = ProcEntry->ModuleListHead.Flink; 
-	      ModuleLE != &(ProcEntry->ModuleListHead); ModuleLE = ModuleLE->Flink){
-	    ModuleEntry = CONTAINING_RECORD(ModuleLE, MODULE_ENTRY, MList);
-	    DbgPrint("%wZ @ %p\n", &(ModuleEntry->FullImgName), ModuleEntry->ImgBase);
-	    dosh = ModuleEntry->ImgBase;
-   	    __try{
-	      if(!dosh && (dosh->e_magic != DOSMAGIC)){
-		DbgPrint("DOS magic not valid\n");
-		continue;
-	      }
-	      nth32 = nth64 = (char *)dosh + dosh->e_lfanew;
-	      if(nth32->Signature != PESIGN){
-		DbgPrint("PE signature not valid\n");
-		continue;
-	      }
-	    }__except(EXCEPTION_EXECUTE_HANDLER){
-	      DbgPrint("!EXCEPTION! Module probably unloaded\n");
+	if(!NT_SUCCESS(PsLookupProcessByProcessId(ProcEntry->pid, &proc)))
+	  continue;
+
+	KeStackAttachProcess(proc, &apc_state);
+
+	for(ModuleLE = ProcEntry->ModuleListHead.Flink; 
+	    ModuleLE != &(ProcEntry->ModuleListHead);
+	    ModuleLE = ModuleLE->Flink){
+
+	  ModuleEntry = CONTAINING_RECORD(ModuleLE, MODULE_ENTRY, MList);
+	  DbgPrint("%wZ @ %p\n",
+		   &(ModuleEntry->FullImgName), ModuleEntry->ImgBase);
+
+	  dosh = ModuleEntry->ImgBase;
+	  __try{
+	    if(!dosh && (dosh->e_magic != DOSMAGIC)){
+	      DbgPrint("DOS magic not valid\n");
 	      continue;
 	    }
-	    if(nth32->FileHeader.Machine == 0x8664){
-	      nsec = nth64->FileHeader.NumberOfSections;
-	      ish = (char *) &(nth64->OptionalHeader) 
-		+ nth64->FileHeader.SizeOfOptionalHeader;
-	      /* TODO GET DESIRED IMAGE BASE FROM FILE ON DISK! YES, ON DISK! */
-	      delta = (INT_PTR)ModuleEntry->ImgBase - nth64->OptionalHeader.ImageBase;
-	      RelocSectionRVA = nth64->OptionalHeader.DataDirectory[RELOC_DIR].VirtualAddress;
-	      RelocSectionSize = nth64->OptionalHeader.DataDirectory[RELOC_DIR].Size;
-	    }else if(nth32->FileHeader.Machine == 0x014c){
-	      nsec = nth32->FileHeader.NumberOfSections;
-	      ish = (char *) &(nth32->OptionalHeader) 
-		+ nth32->FileHeader.SizeOfOptionalHeader;
-	      delta = (INT_PTR)ModuleEntry->ImgBase - nth32->OptionalHeader.ImageBase;
-	      RelocSectionRVA = nth32->OptionalHeader.DataDirectory[RELOC_DIR].VirtualAddress;
-	      RelocSectionSize = nth32->OptionalHeader.DataDirectory[RELOC_DIR].Size;
-	    }else DbgPrint("Probably itanium :-)\n");
-	    for( i = 0; i < nsec; i++){
-	      if(ish[i].Characteristics & IMAGE_SCN_CNT_CODE){
-		/* get ready to fix back the fixups */
-		/* !FIXME! use max(VirtualSize, SizeOfRawData) here and in hashing */
-		FixedSection = ExAllocatePoolWithTag(PagedPool, ish[i].Misc.VirtualSize, TAG);
-		RtlCopyMemory(FixedSection, 
-			      ish[i].VirtualAddress + (char *)dosh, ish[i].Misc.VirtualSize);
-		/* !TODO: check if we really need a relocation fixback */
-		/* !TODO: refactor and put in a seperate procedure */
-		for(VarSectionSize = 0; VarSectionSize < RelocSectionSize;
-		    VarSectionSize += RelocBlockHead->BlockSize){
-		  /* handy info at the beginning of each block */
-		  RelocBlockHead = RelocSectionRVA + VarSectionSize + (char *)dosh;
-		  RelocBlock = (char *)RelocBlockHead + sizeof(BASE_RELOCATION_BLOCK_HEAD);
-		  for(NBlock = 0; 
-		      NBlock*sizeof(WORD) +  sizeof(RelocBlockHead) < RelocBlockHead->BlockSize;
-		      NBlock++){
-		    /* NBlock++ bc most relocation types occupy 1 slot */
-		    Type = offset = 0; /* paranoid? */
-		    /* type of reloc to apply - the high 4 bits of the word field */
-		    Type = RelocBlock[NBlock] >> 12;
-		    /* offset in page described by PageRVA in reloc block header 
-		       - low 12 bits */
-		    offset = RelocBlock[NBlock] & 0xFFF;
-		    /* calculate address within our temp buffer */
-		    /* does this reloc belong to our section */
-		    if( (RelocBlockHead->PageRVA + offset < ish[i].VirtualAddress)
-			|| (RelocBlockHead->PageRVA + offset 
-			    > ish[i].VirtualAddress + ish[i].Misc.VirtualSize) )
-		      continue; /* don't drop, useful relocs might be further on */
-		    FixedReloc = FixedSection + RelocBlockHead->PageRVA + offset 
-		      - (char *)ish[i].VirtualAddress; 
-		    switch(Type){
-		    case IMAGE_REL_BASED_ABSOLUTE:
-		      break;
-		    case IMAGE_REL_BASED_HIGHADJ:
-		      DbgPrint("!!FIXME: IMAGE_REL_BASED_HIGHADJ\n");
-		      NBlock++; /* this one occupies 2 slots I hope it won't show up*/
-		      break;
-		    case IMAGE_REL_BASED_HIGH:
-		      *(short *)FixedReloc = 0; // -= (short) ((delta >> 16) & 0xFFFF) ;
-		      break;
-		    case IMAGE_REL_BASED_LOW:
-		      *(short *)FixedReloc = 0; // -= (short) (delta & 0xFFFF);
-		      break;
-		    case IMAGE_REL_BASED_HIGHLOW:
-		      *(int *)FixedReloc = 0; // -= (int) (delta & 0xFFFFFFFF);
-		      break;
-		    case IMAGE_REL_BASED_DIR64:
-		      /* can't remember a word for a shitty code structures */
-		      *(INT_PTR *)FixedReloc  = 0;//-= delta;
-		      break;
-		    default:
-		      DbgPrint("!!FIXME: unanticipated reloc type: %i\n", Type);
-		      break;
-		    }
-		  }
-		}  
-		DbgPrint("%p w/ sha1: ", ish[i].VirtualAddress + (char *)dosh);
-		SHA1Reset(&sha);
-		SHA1Input(&sha, (PUCHAR *) FixedSection, ish[i].Misc.VirtualSize);
-		if(SHA1Result(&sha))
-		  DbgPrint("%X%X%X%X%X\n", sha.Message_Digest[0],
-			   sha.Message_Digest[1],
-			   sha.Message_Digest[2],
-			   sha.Message_Digest[3],
-			   sha.Message_Digest[4]);
-		/* test dump 
-		if(DoesEndWith(&(ModuleEntry->FullImgName), &GameUIModuleName)){
-		  RtlCopyMemory(OutBuffer, FixedSection, 
-				ish[i].Misc.VirtualSize);
-		  DbgPrint("DELTA = 0X%X", delta);
-		}
-		*/
-		ExFreePoolWithTag(FixedSection, TAG);
-	      }
-	    }	   
+	    nth32 = nth64 = (char *)dosh + dosh->e_lfanew;
+	    if(nth32->Signature != PESIGN){
+	      DbgPrint("PE signature not valid\n");
+	      continue;
+	    }
+	  }__except(EXCEPTION_EXECUTE_HANDLER){
+	    DbgPrint("!EXCEPTION! Module probably unloaded\n");
+	    continue;
 	  }
-	  KeUnstackDetachProcess(&apc_state);
-	  ObDereferenceObject(proc);
-	  status = STATUS_SUCCESS;
+	  if(nth32->FileHeader.Machine == 0x8664){
+	    nsec = nth64->FileHeader.NumberOfSections;
+	    ish = (char *) &(nth64->OptionalHeader) 
+	      + nth64->FileHeader.SizeOfOptionalHeader;
+	    /* TODO GET DESIRED IMAGE BASE FROM FILE ON DISK! YES, ON DISK! */
+	    delta = (INT_PTR)ModuleEntry->ImgBase
+	      - nth64->OptionalHeader.ImageBase;
+	    RelocSectionRVA
+	      = nth64->OptionalHeader.DataDirectory[RELOC_DIR].VirtualAddress;
+	    RelocSectionSize
+	      = nth64->OptionalHeader.DataDirectory[RELOC_DIR].Size;
+	  }else if(nth32->FileHeader.Machine == 0x014c){
+	    nsec = nth32->FileHeader.NumberOfSections;
+	    ish = (char *) &(nth32->OptionalHeader) 
+	      + nth32->FileHeader.SizeOfOptionalHeader;
+	    delta = (INT_PTR)ModuleEntry->ImgBase
+	      - nth32->OptionalHeader.ImageBase;
+	    RelocSectionRVA
+	      = nth32->OptionalHeader.DataDirectory[RELOC_DIR].VirtualAddress;
+	    RelocSectionSize
+	      = nth32->OptionalHeader.DataDirectory[RELOC_DIR].Size;
+	  }else DbgPrint("Probably itanium :-)\n");
+	  for( i = 0; i < nsec; i++){
+	    if(ish[i].Characteristics & IMAGE_SCN_CNT_CODE){
+	      /* get ready to fix back the fixups */
+	      /* !FIXME! use max(VirtualSize, SizeOfRawData) here and in hashing */
+	      FixedSection = ExAllocatePoolWithTag(PagedPool,
+						   ish[i].Misc.VirtualSize,
+						   TAG);
+	      RtlCopyMemory(FixedSection, 
+			    ish[i].VirtualAddress + (char *)dosh,
+			    ish[i].Misc.VirtualSize);
+	      /* !TODO: check if we really need a relocation fixback */
+	      /* !TODO: refactor and put in a seperate procedure */
+	      for(VarSectionSize = 0; VarSectionSize < RelocSectionSize;
+		  VarSectionSize += RelocBlockHead->BlockSize){
+		/* handy info at the beginning of each block */
+		RelocBlockHead = RelocSectionRVA + VarSectionSize
+		  + (char *)dosh;
+		RelocBlock = (char *)RelocBlockHead
+		  + sizeof(BASE_RELOCATION_BLOCK_HEAD);
+		for(NBlock = 0; 
+		    (NBlock*sizeof(WORD) + sizeof(RelocBlockHead))
+		      < RelocBlockHead->BlockSize;
+		    NBlock++){
+		  /* NBlock++ bc most relocation types occupy 1 slot */
+		  Type = offset = 0; /* paranoid? */
+		  /* type of reloc to apply - the high 4 bits of
+		     the word field */
+		  Type = RelocBlock[NBlock] >> 12;
+		  /* offset in page described by PageRVA in reloc
+		     block header - low 12 bits */
+		  offset = RelocBlock[NBlock] & 0xFFF;
+		  /* calculate address within our temp buffer */
+		  /* does this reloc belong to our section */
+		  if( (RelocBlockHead->PageRVA + offset
+		       < ish[i].VirtualAddress)
+		      || (RelocBlockHead->PageRVA + offset 
+			  > ish[i].VirtualAddress + ish[i].Misc.VirtualSize) )
+		    /* don't drop, useful relocs might be further on */
+		    continue;
+		    
+		  FixedReloc = FixedSection + RelocBlockHead->PageRVA
+		    + offset - (char *)ish[i].VirtualAddress; 
+		  switch(Type){
+		  case IMAGE_REL_BASED_ABSOLUTE:
+		    break;
+		  case IMAGE_REL_BASED_HIGHADJ:
+		    DbgPrint("!!FIXME: IMAGE_REL_BASED_HIGHADJ\n");
+		    /* this one occupies 2 slots I hope it won't show up*/
+		    NBlock++;
+		    break;
+		  case IMAGE_REL_BASED_HIGH:
+		    *(short *)FixedReloc = 0; // -= (short) ((delta >> 16) & 0xFFFF) ;
+		    break;
+		  case IMAGE_REL_BASED_LOW:
+		    *(short *)FixedReloc = 0; // -= (short) (delta & 0xFFFF);
+		    break;
+		  case IMAGE_REL_BASED_HIGHLOW:
+		    *(int *)FixedReloc = 0; // -= (int) (delta & 0xFFFFFFFF);
+		    break;
+		  case IMAGE_REL_BASED_DIR64:
+		    /* can't remember a word for a shitty code structures */
+		    *(INT_PTR *)FixedReloc  = 0;//-= delta;
+		    break;
+		  default:
+		    DbgPrint("!!FIXME: unanticipated reloc type: %i\n", Type);
+		    break;
+		  }
+		}
+	      }  
+	      DbgPrint("%p w/ sha1: ", ish[i].VirtualAddress + (char *)dosh);
+	      SHA1Reset(&sha);
+	      SHA1Input(&sha, (PUCHAR *) FixedSection,
+			ish[i].Misc.VirtualSize);
+	      if(SHA1Result(&sha))
+		DbgPrint("%X%X%X%X%X\n", sha.Message_Digest[0],
+			 sha.Message_Digest[1],
+			 sha.Message_Digest[2],
+			 sha.Message_Digest[3],
+			 sha.Message_Digest[4]);
+	      /* test dump 
+		 if(DoesEndWith(&(ModuleEntry->FullImgName), &GameUIModuleName)){
+		 RtlCopyMemory(OutBuffer, FixedSection, 
+		 ish[i].Misc.VirtualSize);
+		 DbgPrint("DELTA = 0X%X", delta);
+		 }
+	      */
+	      ExFreePoolWithTag(FixedSection, TAG);
+	    }
+	  }	   
 	}
+	KeUnstackDetachProcess(&apc_state);
+	ObDereferenceObject(proc);
+	status = STATUS_SUCCESS;
       }
     }else DbgPrint("Argument mismatch");
     break;

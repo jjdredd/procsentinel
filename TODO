@@ -1,0 +1,6 @@
+* WinXP port
+
+* use createprocessnotifyroutine to catch process creation?
+  (get eprocess by pid and image name ???)
+
+* refactor??
